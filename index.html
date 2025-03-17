@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+    background-color: #f5f5f5;
+  }
+  
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    background-color: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+  }
+  
+  h1 {
+    text-align: center;
+    color: #333;
+    margin-top: 0;
+  }
+  
+  .controls {
+    margin-bottom: 20px;
+    display: flex;
+    justify-content: center;
+  }
+  
+  .tooltip {
+    position: absolute;
+    background: white;
+    border: 1px solid #ccc;
+    padding: 10px;
+    pointer-events: none;
+    opacity: 0;
+    border-radius: 4px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  }
+
+  .cell {
+    cursor: pointer;
+  }
+
+  .axis text {
+    font-size: 12px;
+  }
+
+  .axis line, .axis path {
+    stroke: #ccc;
+  }
+
+  button {
+    margin-bottom: 10px;
+    padding: 8px 16px;
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.3s;
+  }
+  
+  button:hover {
+    background-color: #45a049;
+  }
+  
+  #chart, #legend {
+    display: flex;
+    justify-content: center;
+    overflow-x: auto;
+  }
+</style>
+<body>
+  <div class="container">
+    <h1>Temperature Heatmap Visualization</h1>
+    <button><a href="/index2.html">Go to Part 2</a></button>
+    
+    <div class="controls">
+
+      <button id="toggle">Show Min</button>
+    </div>
+
+    <!-- Main chart container -->
+    <div id="chart"></div>
+
+    <!-- Legend container -->
+    <div id="legend"></div>
+  </div>
+  
+  <!-- Load D3 (v6 or newer) -->
+  <script src="https://d3js.org/d3.v6.min.js"></script>
+  <script>
+    d3.csv("temperature_daily.csv").then(function(data) {
+      // Parse the CSV
+      data.forEach(d => {
+        const dateParts = d.date.split('-');
+        const year = parseInt(dateParts[0]);
+        const month = parseInt(dateParts[1]) - 1;
+        const day = parseInt(dateParts[2]);
+        
+        d.date = new Date(year, month, day);
+        d.min_temperature = +d.min_temperature;
+        d.max_temperature = +d.max_temperature;
+      });
+      
+      // Verify parsing worked correctly by logging a few samples
+      console.log("Sample dates after parsing:", data.slice(0, 3).map(d => 
+        ({ original: d.date, year: d.date.getFullYear(), month: d.date.getMonth() + 1, day: d.date.getDate() })
+      ));
+        
+      let filteredData = data;
+      
+      const nested = d3.rollups(
+        filteredData,
+        v => ({
+          min: d3.min(v, d => d.min_temperature),
+          max: d3.max(v, d => d.max_temperature),
+          days: v.sort((a, b) => a.date - b.date)
+        }),
+        d => d.date.getFullYear(),
+        d => d.date.getMonth() + 1
+      );
+
+      
+      let monthlyData = [];
+      nested.forEach(([year, months]) => {
+        months.forEach(([month, stats]) => {
+          monthlyData.push({
+            year: +year,
+            month: +month,
+            min: stats.min,
+            max: stats.max,
+            days: stats.days
+          });
+        });
+      });
+
+      console.log(monthlyData);
+
+      // Figure out which years/months we have
+      const years = Array.from(new Set(monthlyData.map(d => d.year))).sort(d3.ascending);
+      const months = d3.range(1, 13); // 1..12
+
+      // Global min/max across all data
+      const globalMin = d3.min(monthlyData, d => d.min);
+      const globalMax = d3.max(monthlyData, d => d.max);
+
+      
+      const color = d3.scaleSequential(d3.interpolateYlOrRd)
+        .domain([globalMin, globalMax]);
+
+      // Dimensions
+      const cellSize = 35; // Increased cell size for wider chart
+      const margin = { top: 50, right: 40, bottom: 40, left: 100 }; // Increased margins for labels
+      const width  = margin.left + margin.right + cellSize * years.length;
+      const height = margin.top + margin.bottom + cellSize * months.length;
+
+      // Create SVG
+      const svg = d3.select("#chart")
+        .append("svg")
+        .attr("width", width)
+        .attr("height", height);
+
+      // Scales for positioning
+      const xScale = d3.scaleBand()
+        .domain(years)
+        .range([margin.left, width - margin.right])
+        .padding(0.1); // Added padding between cells
+
+      const yScale = d3.scaleBand()
+        .domain(months)
+        .range([margin.top, height - margin.bottom])
+        .padding(0.1); // Added padding between cells
+
+      // Axes
+      const xAxis = d3.axisTop(xScale)
+        .tickValues(years) // show all years
+        .tickFormat(d => d);
+
+      svg.append("g")
+        .attr("class", "axis")
+        .attr("transform", `translate(0,${margin.top})`)
+        .call(xAxis)
+        .selectAll("text")  // Adjust the year labels for better visibility
+        .style("text-anchor", "middle");
+
+      // For month labels, convert 1..12 to names
+      const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      const yAxis = d3.axisLeft(yScale)
+        .tickValues(months)
+        .tickFormat(m => monthNames[m - 1]);
+
+      svg.append("g")
+        .attr("class", "axis")
+        .attr("transform", `translate(${margin.left},0)`)
+        .call(yAxis);
+
+      // Tooltip
+      const tooltip = d3.select("body")
+        .append("div")
+        .attr("class", "tooltip");
+
+      // Track which metric to color by (default: max)
+      let showMin = false;
+
+      // Draw the cells
+      svg.selectAll(".cell")
+        .data(monthlyData)
+        .join("rect")
+        .attr("class", "cell")
+        .attr("x", d => xScale(d.year))
+        .attr("y", d => yScale(d.month))
+        .attr("width", xScale.bandwidth())
+        .attr("height", yScale.bandwidth())
+        .attr("fill", d => color(d.max))  // default color by max
+        .on("mouseover", function(event, d) {
+          d3.select(this).attr("stroke", "black").attr("stroke-width", 1);
+          tooltip
+            .style("opacity", 1)
+            .html(`
+              <strong>Date:</strong> ${d.year}-${String(d.month).padStart(2, "0")}<br>
+              <strong>Max:</strong> ${d.max}<br>
+              <strong>Min:</strong> ${d.min}
+            `)
+            .style("left", (event.pageX + 10) + "px")
+            .style("top", (event.pageY - 20) + "px");
+        })
+        .on("mousemove", function(event) {
+          tooltip
+            .style("left", (event.pageX + 10) + "px")
+            .style("top", (event.pageY - 20) + "px");
+        })
+        .on("mouseout", function() {
+          d3.select(this).attr("stroke", "none");
+          tooltip.style("opacity", 0);
+        });
+
+      // Update cell color when toggling min/max
+      function updateCells() {
+        svg.selectAll(".cell")
+          .transition()
+          .duration(500)
+          .attr("fill", d => color(showMin ? d.min : d.max));
+      }
+
+      // Toggle button
+      d3.select("#toggle").on("click", function() {
+        showMin = !showMin;
+        d3.select(this).text(showMin ? "Show Max" : "Show Min");
+        updateCells();
+      });
+
+      // Add a simple legend
+      const legendWidth = 300;
+      const legendHeight = 10;
+
+      const legendSvg = d3.select("#legend")
+        .append("svg")
+        .attr("width", legendWidth + 60)
+        .attr("height", 50);
+
+      const defs = legendSvg.append("defs");
+      const linearGradient = defs.append("linearGradient")
+        .attr("id", "legend-gradient");
+
+      linearGradient.selectAll("stop")
+        .data([
+          {offset: "0%", color: color(globalMin)},
+          {offset: "100%", color: color(globalMax)}
+        ])
+        .join("stop")
+        .attr("offset", d => d.offset)
+        .attr("stop-color", d => d.color);
+
+      // Gradient rect
+      legendSvg.append("rect")
+        .attr("x", 20)
+        .attr("y", 10)
+        .attr("width", legendWidth)
+        .attr("height", legendHeight)
+        .style("fill", "url(#legend-gradient)");
+
+      // Legend axis
+      const legendScale = d3.scaleLinear()
+        .domain([globalMin, globalMax])
+        .range([20, 20 + legendWidth]);
+
+      const legendAxis = d3.axisBottom(legendScale)
+        .ticks(5);
+
+      legendSvg.append("g")
+        .attr("transform", `translate(0, ${10 + legendHeight})`)
+        .call(legendAxis);
+    });
+  </script>
+</body>
+</html>
